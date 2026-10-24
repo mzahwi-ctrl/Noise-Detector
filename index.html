@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Noise Detector</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+:root{
+  --bg:#eff2f5; --surface:#fff; --surface2:#f5f7f9; --ink:#0e1621; --ink2:#46515f; --muted:#6b7686; --line:#dde2e8; --line2:#c9d0d8;
+  --silent:#3b7bd8; --whisper:#3faf4f; --quiet:#f2c318; --chatter:#f08a2c; --loud:#e0322b;
+  --good:#12805a; --good-bg:#e2f4ec; --warn:#a86a00; --warn-bg:#fbf0d9; --bad:#c0302b; --bad-bg:#fbe4e2;
+  --f-display:'Barlow Condensed','Arial Narrow',Arial,sans-serif; --f-body:'Barlow',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+}
+@media (prefers-color-scheme: dark){:root{--bg:#0b1016;--surface:#141b23;--surface2:#1a232d;--ink:#eef2f6;--ink2:#b4bfcc;--muted:#8793a2;--line:#26303b;--line2:#36424f;--good:#3fc79a;--good-bg:#12302a;--warn:#e8b04a;--warn-bg:#352a12;--bad:#f07a74;--bad-bg:#3a1e1d;color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 var(--f-body);-webkit-tap-highlight-color:transparent}
+h1,h2,h3{font-family:var(--f-display);margin:0;font-weight:700;letter-spacing:.01em}
+h1{font-size:34px;line-height:1.05}h2{font-size:24px}h3{font-size:14px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink2);font-family:var(--f-body);font-weight:600}
+button,select,input{font:inherit;color:inherit}
+button{cursor:pointer}
+.wrap{max-width:1180px;margin:0 auto;padding:calc(16px + env(safe-area-inset-top)) 16px calc(40px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:16px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:12px}
+.row{display:flex;flex-wrap:wrap;gap:10px 12px;align-items:center}
+.note{font-size:14px;color:var(--ink2)}
+.btn{border:1px solid var(--line2);background:var(--surface);border-radius:10px;padding:9px 16px;font-weight:600;min-height:44px;display:inline-flex;align-items:center;gap:8px}
+.btn.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.btn.danger{color:var(--bad);border-color:var(--bad)}
+.btn.small{min-height:34px;padding:4px 12px;font-size:14px}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.sel,.txt{border:1px solid var(--line2);background:var(--surface);border-radius:10px;padding:8px 12px;min-height:44px}
+.pill{display:inline-flex;align-items:center;gap:6px;border-radius:99px;padding:2px 10px;font-size:13px;font-weight:600;white-space:nowrap}
+.pill.good{background:var(--good-bg);color:var(--good)}.pill.warn{background:var(--warn-bg);color:var(--warn)}.pill.bad{background:var(--bad-bg);color:var(--bad)}.pill.neutral{background:var(--surface2);color:var(--ink2);border:1px solid var(--line)}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media(max-width:760px){.grid2{grid-template-columns:minmax(0,1fr)}}
+.big-choice{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.big-choice button{min-height:84px;border-radius:14px;border:2px solid var(--line2);background:var(--surface);font:700 26px var(--f-display)}
+.big-choice button.teacher{grid-column:span 4;font-size:22px}
+@media(max-width:560px){.big-choice{grid-template-columns:repeat(2,minmax(0,1fr))}.big-choice button.teacher{grid-column:span 2}}
+/* meter */
+.meter{display:flex;flex-direction:column;gap:4px;width:100%}
+.meter .seg{border-radius:8px;padding:6px 10px;font-weight:700;font-size:14px;color:#1b1b1b;opacity:.28;transition:opacity .15s;text-align:center}
+.meter .seg.on{opacity:1}
+.seg.loud{background:var(--loud);color:#fff}.seg.chatter{background:var(--chatter)}.seg.quiet{background:var(--quiet)}.seg.whisper{background:var(--whisper);color:#fff}.seg.silent{background:var(--silent);color:#fff}
+.bar{height:12px;border-radius:6px;background:var(--surface2);overflow:hidden;border:1px solid var(--line)}
+.bar i{display:block;height:100%;width:0;background:var(--ink2);transition:width .15s}
+/* seat screen */
+.seatscreen{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:24px}
+.seatscreen .meter{max-width:340px}
+.seatscreen .meter .seg{font-size:22px;padding:14px}
+.seatscreen .lab{font:700 44px var(--f-display)}
+/* hub */
+.seats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+@media(max-width:900px){.seats{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:620px){.seats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.seat{background:var(--surface);border:3px solid var(--line);border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:8px;min-width:0;transition:background .2s,border-color .2s}
+.seat .t{display:flex;justify-content:space-between;align-items:baseline;gap:6px}
+.seat .t b{font:700 24px var(--f-display)}
+.seat .lvl{font:700 20px var(--f-display);text-transform:uppercase;letter-spacing:.04em}
+.seat.off{opacity:.55}
+.seat.alert-chatter{background:#fff3b0;border-color:#e5b800;animation:flash 0.5s 4}
+.seat.alert-loud{background:#ffd0cc;border-color:var(--loud);animation:flash 0.4s 7}
+@media (prefers-color-scheme: dark){.seat.alert-chatter{background:#4a3f05}.seat.alert-loud{background:#4d1513}}
+@keyframes flash{50%{transform:scale(1.03)}}
+.seat .mini{display:flex;gap:3px;height:10px}
+.seat .mini span{flex:1;border-radius:3px;opacity:.25}
+.seat .mini span.on{opacity:1}
+.teacherbox{display:grid;grid-template-columns:180px minmax(0,1fr);gap:14px;align-items:center}
+@media(max-width:620px){.teacherbox{grid-template-columns:minmax(0,1fr)}}
+.log{display:flex;flex-direction:column;gap:4px;max-height:220px;overflow:auto}
+.log div{display:flex;gap:10px;font-size:14px;padding:4px 0;border-bottom:1px solid var(--line)}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{padding:7px 9px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink2)}
+td.r,th.r{text-align:right}
+.scroll{overflow-x:auto}
+.winner{background:var(--good-bg)}
+.slider{display:grid;grid-template-columns:110px minmax(0,1fr) 44px;gap:10px;align-items:center}
+.slider input{width:100%}
+.code{font:700 40px var(--f-display);letter-spacing:.12em}
+textarea.txt{width:100%;min-height:90px;font:13px ui-monospace,Menlo,monospace}
+body.ballmode{overflow:hidden}
+.balls{position:fixed;inset:0;background:radial-gradient(circle at 50% 20%,#ffffff,#e9eef4);overflow:hidden}
+@media (prefers-color-scheme: dark){.balls{background:radial-gradient(circle at 50% 20%,#1d2733,#0b1016)}}
+.balls canvas{position:absolute;inset:0;width:100%;height:100%}
+.bTop{position:absolute;top:calc(14px + env(safe-area-inset-top));left:0;right:0;text-align:center;pointer-events:none}
+.bSeat{font:600 18px var(--f-body);color:var(--ink2);text-transform:uppercase;letter-spacing:.1em}
+.bBand{font:700 64px/1 var(--f-display);color:var(--ink)}
+.bShh{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font:700 min(26vw,220px)/1 var(--f-display);color:#fff;opacity:0;transform:scale(.6);transition:opacity .2s,transform .25s;pointer-events:none;text-shadow:0 6px 30px rgba(0,0,0,.35)}
+.bShh.show{opacity:1;transform:scale(1)}
+.bShh.chatter{-webkit-text-stroke:4px #d6731a}.bShh.loud{-webkit-text-stroke:5px #bf2620}
+.balls.hit-chatter{animation:tintY 2s}.balls.hit-loud{animation:tintR 3s}
+@keyframes tintY{0%,80%{box-shadow:inset 0 0 0 100vmax rgba(242,195,24,.35)}100%{box-shadow:none}}
+@keyframes tintR{0%,85%{box-shadow:inset 0 0 0 100vmax rgba(224,50,43,.35)}100%{box-shadow:none}}
+.bFoot{position:absolute;left:0;right:0;bottom:calc(10px + env(safe-area-inset-bottom));display:flex;justify-content:center;gap:10px;align-items:center}
+#toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:calc(100% - 32px);z-index:9}
+.hide{display:none!important}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="toast" role="status"></div>
+<script>
+/* ===== shared ===== */
+const BANDS = ['silent', 'whisper', 'quiet', 'chatter', 'loud'];
+const BAND_LABEL = {silent: 'Silent', whisper: 'Whisper', quiet: 'Quiet', chatter: 'Chatter', loud: 'Loud'};
+const DEFAULT_TH = {whisper: 22, quiet: 38, chatter: 56, loud: 72, holdChatter: 1.5, holdLoud: 1.0};
+const PREFIX = 'dskmath-noise-';
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+const LS = {get(k, d) { try { const v = localStorage.getItem('nd.' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } }, set(k, v) { try { localStorage.setItem('nd.' + k, JSON.stringify(v)); } catch (e) {} }};
+function toast(m) { const t = $('#toast'); t.textContent = m; t.style.opacity = 1; clearTimeout(toast.t); toast.t = setTimeout(() => t.style.opacity = 0, 3500); }
+function band(v, th) { return v >= th.loud ? 'loud' : v >= th.chatter ? 'chatter' : v >= th.quiet ? 'quiet' : v >= th.whisper ? 'whisper' : 'silent'; }
+function meterHtml(id) { return `<div class="meter" id="${id}">${[...BANDS].reverse().map(b => `<div class="seg ${b}" data-b="${b}">${BAND_LABEL[b]}</div>`).join('')}</div>`; }
+function setMeter(el, b) { if (!el) return; el.querySelectorAll('.seg').forEach(s => s.classList.toggle('on', BANDS.indexOf(s.dataset.b) <= BANDS.indexOf(b))); }
+const isoDay = d => { const p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
+let wakeLock = null;
+async function keepAwake() { try { if ('wakeLock' in navigator) { wakeLock = await navigator.wakeLock.request('screen'); } } catch (e) {} }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && (Mic.on)) keepAwake(); });
+
+/* ===== microphone level (no audio is recorded or sent) ===== */
+const Mic = {on: false, ctx: null, an: null, buf: null, ema: 0,
+  async start() {
+    const stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: false, noiseSuppression: false, autoGainControl: false}});
+    this.ctx = this.ctx || new (window.AudioContext || window.webkitAudioContext)();
+    if (this.ctx.state === 'suspended') await this.ctx.resume();
+    const src = this.ctx.createMediaStreamSource(stream);
+    this.an = this.ctx.createAnalyser(); this.an.fftSize = 2048; this.buf = new Float32Array(this.an.fftSize);
+    src.connect(this.an); this.on = true; keepAwake();
+  },
+  read() {
+    if (!this.an) return 0;
+    this.an.getFloatTimeDomainData(this.buf);
+    let s = 0; for (let i = 0; i < this.buf.length; i++) s += this.buf[i] * this.buf[i];
+    const db = 20 * Math.log10(Math.sqrt(s / this.buf.length) + 1e-9);   // dBFS, about -90 (silence) to 0 (max)
+    const v = Math.max(0, Math.min(100, (db + 75) * (100 / 65)));        // -75 dBFS -> 0, -10 dBFS -> 100
+    this.ema = this.ema * 0.7 + v * 0.3;
+    return Math.round(this.ema);
+  }
+};
+function micError(e) { const n = e && e.name; return n === 'NotAllowedError' ? 'Microphone permission was refused. In Settings > Safari > Microphone choose Allow (or Ask), then reload this page.' : n === 'NotFoundError' ? 'No microphone was found on this device.' : !window.isSecureContext ? 'This page must be opened from an https:// address for the microphone to work.' : 'The microphone could not start: ' + (e && e.message || n || 'unknown error'); }
+
+/* ===== alarms (generated sound, no files) ===== */
+const Alarm = {ctx: null,
+  unlock() { this.ctx = this.ctx || Mic.ctx || new (window.AudioContext || window.webkitAudioContext)(); if (this.ctx.state === 'suspended') this.ctx.resume(); const o = this.ctx.createOscillator(), g = this.ctx.createGain(); g.gain.value = 0.0001; o.connect(g).connect(this.ctx.destination); o.start(); o.stop(this.ctx.currentTime + 0.05); },
+  tone(freqs, start, dur, type, vol) { const c = this.ctx, o = c.createOscillator(), g = c.createGain(); o.type = type; freqs.forEach(([f, t]) => o.frequency.setValueAtTime(f, start + t)); g.gain.setValueAtTime(0.0001, start); g.gain.exponentialRampToValueAtTime(vol, start + 0.03); g.gain.setValueAtTime(vol, start + dur - 0.05); g.gain.exponentialRampToValueAtTime(0.0001, start + dur); o.connect(g).connect(c.destination); o.start(start); o.stop(start + dur + 0.02); },
+  chatter() { if (!this.ctx) return; const t = this.ctx.currentTime; for (let i = 0; i < 4; i++) this.tone([[660, 0]], t + i * 0.5, 0.32, 'sine', 0.35); },                    // 2 s: four soft "ding" beeps
+  loud() { if (!this.ctx) return; const t = this.ctx.currentTime; for (let i = 0; i < 6; i++) this.tone([[880, 0], [1320, 0.25]], t + i * 0.5, 0.48, 'square', 0.6); }   // 3 s: louder two-tone siren
+};
+
+/* ===== router ===== */
+const params = new URLSearchParams(location.search);
+function home() {
+  const code = LS.get('code', '');
+  $('#app').innerHTML = `<div class="wrap"><div><h1>Noise Detector</h1><div class="note">Dubai School AlKhawaneej · Math</div></div>
+  <section class="card"><h2>What is this device?</h2><div class="note">Put one iPad on each set of seats and keep this page open. The teacher's PC shows all seats and sounds the alarms. Only the loudness number leaves each iPad; no sound is recorded or sent.</div>
+  <div class="big-choice">${[1, 2, 3, 4, 5, 6, 7].map(n => `<button type="button" data-seat="${n}">Seat ${n}</button>`).join('')}<button type="button" class="teacher" data-seat="0">Teacher PC: Noise Monitor</button></div></section></div>`;
+  document.querySelectorAll('[data-seat]').forEach(b => b.onclick = () => { const n = +b.dataset.seat; if (n === 0) Hub.open(); else Seat.setup(n, code); });
+}
+
+/* ===== bouncing balls display ===== */
+const BAND_HEX = {silent: ['#3b7bd8', '#5b95e6', '#2f66b8'], whisper: ['#3faf4f', '#5cc66b', '#2f9140'], quiet: ['#f2c318', '#f7d64c', '#d9a90b'], chatter: ['#f08a2c', '#f6a252', '#d6731a'], loud: ['#e0322b', '#ef5a52', '#bf2620']};
+const Balls = {cv: null, cx: null, list: [], level: 0, band: 'silent', w: 0, h: 0, raf: 0,
+  start(cv) { this.cv = cv; this.cx = cv.getContext('2d'); const fit = () => { const r = devicePixelRatio || 1; this.w = cv.clientWidth; this.h = cv.clientHeight; cv.width = this.w * r; cv.height = this.h * r; this.cx.setTransform(r, 0, 0, r, 0, 0); }; fit(); addEventListener('resize', fit);
+    const n = 34, base = Math.max(14, Math.min(this.w, this.h) / 22);
+    this.list = Array.from({length: n}, (_, i) => ({x: Math.random() * this.w, y: this.h - base, vx: (Math.random() - .5) * 0.6, vy: 0, r: base * (0.7 + Math.random() * 0.6), shade: i % 3}));
+    cancelAnimationFrame(this.raf); const step = () => { this.step(); this.raf = requestAnimationFrame(step); }; step(); },
+  step() {
+    const {cx, w, h} = this, e = Math.max(0, this.level - 8) / 92, g = 0.55, floor = h - 4, cols = BAND_HEX[this.band];
+    cx.clearRect(0, 0, w, h);
+    for (const b of this.list) {
+      if (b.y + b.r >= floor - 0.5 && Math.random() < 0.04 + e * 0.5) b.vy = -Math.sqrt(2 * g * (h * 0.04 + h * 0.85 * Math.pow(e, 1.4) * (0.55 + Math.random() * 0.6)));
+      b.vy += g; b.y += b.vy; b.x += b.vx * (1 + e * 4);
+      if (b.y + b.r > floor) { b.y = floor - b.r; b.vy = -b.vy * 0.35; if (Math.abs(b.vy) < 1.2) b.vy = 0; }
+      if (b.y - b.r < 0) { b.y = b.r; b.vy = Math.abs(b.vy) * 0.5; }
+      if (b.x - b.r < 0 || b.x + b.r > w) { b.vx = -b.vx; b.x = Math.max(b.r, Math.min(w - b.r, b.x)); }
+      const gr = cx.createRadialGradient(b.x - b.r * 0.35, b.y - b.r * 0.4, b.r * 0.15, b.x, b.y, b.r);
+      gr.addColorStop(0, '#ffffffcc'); gr.addColorStop(0.25, cols[b.shade]); gr.addColorStop(1, cols[(b.shade + 2) % 3]);
+      cx.beginPath(); cx.arc(b.x, b.y, b.r, 0, Math.PI * 2); cx.fillStyle = gr; cx.fill();
+    }
+  }
+};
+/* "Shhh" voice, made from filtered noise (no recording needed) */
+const Sfx = {
+  shush(kind) {
+    const c = Mic.ctx; if (!c) return 0; if (c.state === 'suspended') c.resume();
+    const parts = kind === 'loud' ? [[0, 0.7, 1], [0.95, 1.9, 1]] : [[0, 1.7, 0.75]];   // loud: "Shh… SHHHHH", chatter: one "Shhhh"
+    const end = parts[parts.length - 1]; const total = end[0] + end[1];
+    const len = Math.ceil(c.sampleRate * (total + 0.2)), buf = c.createBuffer(1, len, c.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const src = c.createBufferSource(); src.buffer = buf;
+    const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 1800;
+    const bp = c.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 3200; bp.Q.value = 0.9;
+    const pk = c.createBiquadFilter(); pk.type = 'peaking'; pk.frequency.value = 2600; pk.gain.value = 8;
+    const g = c.createGain(); g.gain.value = 0.0001; const t = c.currentTime + 0.02;
+    for (const [st, du, vol] of parts) { g.gain.setValueAtTime(0.0001, t + st); g.gain.exponentialRampToValueAtTime(vol, t + st + 0.12); g.gain.setValueAtTime(vol, t + st + du - 0.35); g.gain.exponentialRampToValueAtTime(0.0001, t + st + du); }
+    src.connect(hp).connect(bp).connect(pk).connect(g).connect(c.destination); src.start(t); src.stop(t + total + 0.1);
+    return total;
+  }
+};
+
+/* ===== seat ===== */
+const Seat = {n: 0, peer: null, conn: null, th: {...DEFAULT_TH}, timer: null, retry: null, code: '',
+  setup(n, code) {
+    this.n = n; LS.set('seat', n);
+    $('#app').innerHTML = `<div class="wrap"><section class="card"><h2>Seat ${n}</h2>
+    <label class="note">Classroom code (shown on the teacher's PC)<br><input class="txt code" id="sCode" inputmode="numeric" maxlength="4" value="${esc(code)}" style="width:200px"></label>
+    <div class="row"><button class="btn primary" type="button" id="sGo">Start listening</button><button class="btn" type="button" id="sBack">Back</button></div>
+    <div class="note" id="sMsg"></div></section></div>`;
+    $('#sBack').onclick = home;
+    $('#sGo').onclick = async () => { const c = $('#sCode').value.trim(); if (!/^\d{4}$/.test(c)) { $('#sMsg').textContent = 'Type the 4-digit code shown on the Noise Monitor (teacher PC).'; return; } LS.set('code', c); this.code = c;
+      try { await Mic.start(); } catch (e) { $('#sMsg').textContent = micError(e); return; } this.screen(); this.connect(); this.loop(); };
+  },
+  screen() {
+    document.body.classList.add('ballmode');
+    $('#app').innerHTML = `<div class="balls" id="bWrap"><canvas id="bCv"></canvas>
+      <div class="bTop"><div class="bSeat">Seat ${this.n}</div><div class="bBand" id="bBand">Silent</div></div>
+      <div class="bShh" id="bShh">Shhh!</div>
+      <div class="bFoot"><span class="pill neutral" id="sConn">Connecting…</span><button class="btn small" type="button" id="sStop">Stop</button></div></div>`;
+    $('#sStop').onclick = () => location.reload();
+    Balls.start($('#bCv'));
+  },
+  shush(kind) {
+    if (this.shushOn === false) return;
+    const dur = Sfx.shush(kind); this.muteUntil = Date.now() + dur * 1000 + 700;
+    const el = $('#bShh'), w = $('#bWrap'); if (el) { el.className = 'bShh show ' + kind; clearTimeout(this.shT); this.shT = setTimeout(() => { el.className = 'bShh'; }, dur * 1000 + 300); }
+    if (w) { w.classList.remove('hit-chatter', 'hit-loud'); void w.offsetWidth; w.classList.add('hit-' + kind); }
+  },
+  status(t, k) { const e = $('#sConn'); if (e) { e.textContent = t; e.className = 'pill ' + k; } },
+  connect() {
+    if (typeof Peer === 'undefined') { this.status('Connection library did not load. Check the internet.', 'bad'); return; }
+    if (!this.peer || this.peer.destroyed) {
+      this.peer = new Peer();
+      this.peer.on('open', () => this.link());
+      this.peer.on('error', e => { if (e.type === 'peer-unavailable') this.status('Noise Monitor not found. Is it open with code ' + this.code + '?', 'warn'); else this.status('Connection problem: ' + e.type, 'warn'); this.later(); });
+      this.peer.on('disconnected', () => { try { this.peer.reconnect(); } catch (e) {} });
+    } else this.link();
+  },
+  link() {
+    const c = this.peer.connect(PREFIX + this.code + '-hub', {metadata: {seat: this.n}, serialization: 'json'});
+    c.on('open', () => { this.conn = c; this.status('Connected to teacher', 'good'); c.send({type: 'hello', seat: this.n}); });
+    c.on('data', d => { if (!d) return; if (d.type === 'cfg' && d.th) { this.th = {...DEFAULT_TH, ...d.th}; this.shushOn = d.th.shush !== 0; } if (d.type === 'shush' && (d.kind === 'chatter' || d.kind === 'loud')) this.shush(d.kind); });
+    c.on('close', () => { this.conn = null; this.status('Noise Monitor disconnected. Retrying…', 'warn'); this.later(); });
+    c.on('error', () => this.later());
+  },
+  later() { clearTimeout(this.retry); this.retry = setTimeout(() => { if (!this.conn) this.connect(); }, 4000); },
+  loop() { clearInterval(this.timer); let k = 0; this.timer = setInterval(() => { const v = Mic.read(), mute = Date.now() < (this.muteUntil || 0), b = band(v, this.th);
+    Balls.level = mute ? Balls.level * 0.9 : v; Balls.band = mute ? Balls.band : b; const bb = $('#bBand'); if (bb && !mute) bb.textContent = BAND_LABEL[b];
+    if (++k % 2 === 0 && this.conn && this.conn.open) { try { this.conn.send({type: 'lvl', seat: this.n, v, mute}); } catch (e) {} } }, 100); }
+};
+
+/* ===== teacher hub ===== */
+const Hub = {peer: null, code: LS.get('code', ''), th: {...DEFAULT_TH, ...LS.get('th', {})}, classes: LS.get('classes', ['6F', '7D', '7E', '7F']), sessions: LS.get('sessions', []),
+  seats: {}, conns: {}, session: null, timer: null, view: 'live', weekOff: 0, logs: [],
+  newSeat(n) { return {n, v: 0, band: 'silent', last: 0, over: {chatter: 0, loud: 0}, cool: {chatter: 0, loud: 0}, alert: null}; },
+  open() {
+    if (!/^\d{4}$/.test(this.code)) { this.code = String(1000 + Math.floor(Math.random() * 9000)); LS.set('code', this.code); }
+    for (let i = 1; i <= 7; i++) this.seats[i] = this.newSeat(i);
+    this.teacher = this.newSeat(0);
+    this.render(); this.listen();
+    clearInterval(this.timer); this.timer = setInterval(() => this.tick(), 200);
+  },
+  listen() {
+    if (typeof Peer === 'undefined') { this.net = 'The connection library did not load. Check the internet and reload.'; this.renderStatus(); return; }
+    try { this.peer && this.peer.destroy(); } catch (e) {}
+    this.peer = new Peer(PREFIX + this.code + '-hub');
+    this.peer.on('open', () => { this.net = ''; this.renderStatus(); });
+    this.peer.on('connection', c => {
+      c.on('data', d => { if (!d || typeof d !== 'object') return; const n = +d.seat; if (!(n >= 1 && n <= 7)) return; this.conns[n] = c; if (d.type === 'hello') c.send({type: 'cfg', th: this.th}); if (d.type === 'lvl') { if (d.mute) { this.seats[n].last = Date.now(); this.seats[n].lastT = performance.now(); } else this.onLevel(this.seats[n], Math.max(0, Math.min(100, +d.v || 0)), true); } });
+      c.on('open', () => c.send({type: 'cfg', th: this.th}));
+    });
+    this.peer.on('error', e => { if (e.type === 'unavailable-id') { this.net = 'This code is still in use (the page was probably just reloaded). Retrying in a few seconds…'; this.renderStatus(); setTimeout(() => this.listen(), 6000); } else { this.net = 'Connection problem: ' + e.type + '. Retrying…'; this.renderStatus(); setTimeout(() => this.listen(), 6000); } });
+    this.peer.on('disconnected', () => { try { this.peer.reconnect(); } catch (e) {} });
+  },
+  broadcastCfg() { Object.values(this.conns).forEach(c => { try { c.open && c.send({type: 'cfg', th: this.th}); } catch (e) {} }); },
+  onLevel(s, v, isSeat) {
+    const now = performance.now(), dt = s.last ? Math.min(1, (now - s.lastT) / 1000) : 0.2;
+    s.v = v; s.band = band(v, this.th); s.lastT = now; s.last = Date.now();
+    const S = this.session;
+    if (S) { const rec = S.seats[s.n] = S.seats[s.n] || {bands: {silent: 0, whisper: 0, quiet: 0, chatter: 0, loud: 0}, chatter: 0, loud: 0, sum: 0, cnt: 0}; rec.bands[s.band] += dt; rec.sum += v; rec.cnt++; }
+    if (!isSeat || !S) return;   // teacher mic records only; alarms only during a lesson
+    s.over.loud = s.band === 'loud' ? s.over.loud + dt : 0;
+    s.over.chatter = (s.band === 'chatter' || s.band === 'loud') ? s.over.chatter + dt : 0;
+    if (s.over.loud >= this.th.holdLoud && Date.now() > s.cool.loud) this.fire(s, 'loud');
+    else if (s.over.chatter >= this.th.holdChatter && Date.now() > s.cool.chatter && Date.now() > s.cool.loud) this.fire(s, 'chatter');
+  },
+  notify(s, type) {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    try { const n = new Notification(`Seat ${s.n}: ${type === 'loud' ? 'LOUD' : 'Chatter'}`, {body: `${this.session ? this.session.cls + ' · ' : ''}Open the Noise Monitor to see the seat.`, tag: 'seat' + s.n, renotify: true, silent: true}); n.onclick = () => { window.focus(); n.close(); }; setTimeout(() => n.close(), 8000); } catch (e) {}
+  },
+  async askNotify() { if (!('Notification' in window)) { toast('This browser cannot show pop-ups.'); return; } if (Notification.permission === 'default') { try { await Notification.requestPermission(); } catch (e) {} } this.renderStatus(); if (Notification.permission === 'denied') toast('Pop-ups are blocked. Click the icon left of the address bar, allow Notifications, then reload.'); },
+  fire(s, type) {
+    const now = Date.now();
+    s.cool[type] = now + (type === 'loud' ? 8000 : 10000); if (type === 'loud') s.cool.chatter = now + 10000;
+    s.alert = {type, until: now + (type === 'loud' ? 3000 : 2000)}; s.over.chatter = 0; s.over.loud = 0;
+    if (type === 'loud') Alarm.loud(); else Alarm.chatter();
+    if (this.th.shush !== 0) { const c = this.conns[s.n]; try { c && c.open && c.send({type: 'shush', kind: type}); } catch (e) {} }
+    if (document.visibilityState !== 'visible' || !document.hasFocus()) this.notify(s, type);
+    const rec = this.session.seats[s.n]; rec[type]++;
+    this.session.alerts.push({t: new Date().toTimeString().slice(0, 8), seat: s.n, type});
+    this.renderLog();
+  },
+  tick() {
+    if (Mic.on) this.onLevel(this.teacher, Mic.read(), false);
+    const now = Date.now();
+    for (let i = 1; i <= 7; i++) { const s = this.seats[i], el = $('#seat' + i); if (!el) continue;
+      const off = !s.last || now - s.last > 3000;
+      if (s.alert && now > s.alert.until) s.alert = null;
+      el.className = 'seat' + (off ? ' off' : '') + (s.alert ? ' alert-' + s.alert.type : '');
+      el.querySelector('.lvl').textContent = off ? 'Offline' : BAND_LABEL[s.band];
+      el.querySelector('.lvl').style.color = off ? 'var(--muted)' : `var(--${s.band === 'quiet' ? 'warn' : s.band})`;
+      el.querySelectorAll('.mini span').forEach((m, k) => m.classList.toggle('on', !off && k <= BANDS.indexOf(s.band)));
+      el.querySelector('.bar i').style.width = (off ? 0 : s.v) + '%';
+    }
+    setMeter($('#tMeter'), Mic.on ? this.teacher.band : 'silent');
+    const tl = $('#tLvl'); if (tl) tl.textContent = Mic.on ? BAND_LABEL[this.teacher.band] : 'Microphone off';
+    const tm = $('#sesTime'); if (tm && this.session) { const m = Math.floor((now - this.session.startMs) / 1000); tm.textContent = `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`; }
+  },
+  async startLesson() {
+    const cls = $('#hCls').value; if (!cls) { toast('Choose the class first.'); return; }
+    Alarm.unlock(); await this.askNotify();
+    if (!Mic.on) { try { await Mic.start(); } catch (e) { toast(micError(e)); } }
+    Alarm.ctx = Mic.ctx || Alarm.ctx;
+    keepAwake();
+    this.session = {id: 's' + Date.now().toString(36), cls, date: isoDay(new Date()), start: new Date().toTimeString().slice(0, 5), startMs: Date.now(), seats: {}, alerts: []};
+    this.logs = []; this.render();
+  },
+  endLesson() {
+    const S = this.session; if (!S) return;
+    const mins = Math.round((Date.now() - S.startMs) / 60000);
+    const seats = {}; let q = 0, tot = 0, sil = 0;
+    Object.entries(S.seats).forEach(([n, r]) => { const b = {}; BANDS.forEach(k => b[k] = Math.round(r.bands[k])); const t = BANDS.reduce((a, k) => a + r.bands[k], 0); seats[n] = {bands: b, chatter: r.chatter, loud: r.loud, avg: r.cnt ? Math.round(r.sum / r.cnt) : 0}; if (+n > 0) { tot += t; q += r.bands.silent + r.bands.whisper + r.bands.quiet; sil += r.bands.silent + r.bands.whisper; } });
+    const rec = {id: S.id, cls: S.cls, date: S.date, start: S.start, end: new Date().toTimeString().slice(0, 5), mins,
+      chatter: S.alerts.filter(a => a.type === 'chatter').length, loud: S.alerts.filter(a => a.type === 'loud').length,
+      quietPct: tot ? Math.round(q / tot * 100) : null, silentPct: tot ? Math.round(sil / tot * 100) : null,
+      teacherAvg: seats[0] ? seats[0].avg : null, seats, alerts: S.alerts.slice(0, 300)};
+    this.sessions = this.sessions.filter(x => x.id !== rec.id).concat(rec); LS.set('sessions', this.sessions);
+    this.session = null; toast(`Lesson saved for ${rec.cls}: ${rec.quietPct ?? '–'}% of the time quiet or calmer, ${rec.chatter} chatter and ${rec.loud} loud alerts.`);
+    this.view = 'week'; this.render();
+  },
+  weekDays() { const d = new Date(); d.setHours(12, 0, 0, 0); const dow = (d.getDay() + 6) % 7; d.setDate(d.getDate() - dow + this.weekOff * 7); return [0, 1, 2, 3, 4].map(i => { const x = new Date(d); x.setDate(d.getDate() + i); return x; }); },
+  weekKeys() { const d = this.weekDays()[0]; return [0, 1, 2, 3, 4, 5, 6].map(i => { const x = new Date(d); x.setDate(d.getDate() + i); return isoDay(x); }); },
+  weekRows() {
+    const all = this.weekKeys(), keys = all.slice(0, 5), ss = this.sessions.filter(s => all.includes(s.date));
+    const cls = [...new Set([...this.classes, ...ss.map(s => s.cls)])];
+    return cls.map(c => { const xs = ss.filter(s => s.cls === c), qs = xs.filter(s => s.quietPct !== null);
+      return {cls: c, xs, n: xs.length, quiet: qs.length ? Math.round(qs.reduce((a, s) => a + s.quietPct, 0) / qs.length) : null, silent: qs.length ? Math.round(qs.reduce((a, s) => a + (s.silentPct || 0), 0) / qs.length) : null, chatter: xs.reduce((a, s) => a + s.chatter, 0), loud: xs.reduce((a, s) => a + s.loud, 0), byDay: keys.map(k => xs.filter(s => s.date === k)).concat(this.hasWeekend() ? [xs.filter(s => all.slice(5).includes(s.date))] : [])}; })
+      .sort((a, b) => (b.quiet ?? -1) - (a.quiet ?? -1) || a.loud - b.loud || a.chatter - b.chatter);
+  },
+  hasWeekend() { const w = this.weekKeys().slice(5); return this.sessions.some(s => w.includes(s.date)); },
+  exportCode() { const keys = this.weekKeys(); const ss = this.sessions.filter(s => keys.includes(s.date)).map(({alerts, ...s}) => ({...s, alertTimes: alerts.map(a => a.t + ' S' + a.seat + ' ' + a.type[0])})); return 'NOISE1:' + btoa(unescape(encodeURIComponent(JSON.stringify({week: keys[0], sessions: ss})))); },
+  renderStatus() { const e = $('#hNet'); if (!e) return; const np = 'Notification' in window ? Notification.permission : 'none'; const seatsOn = Object.values(this.seats).filter(x => x.last && Date.now() - x.last < 3000).length; e.innerHTML = (this.net ? `<div class="pill warn">${esc(this.net)}</div>` : `<span class="pill good">Ready for seats</span>`) + (np === 'granted' ? '<span class="pill good">Windows pop-ups on</span>' : np === 'none' ? '' : `<button class="btn small" type="button" id="hNotif">${np === 'denied' ? 'Pop-ups blocked: how to fix' : 'Turn on Windows pop-ups'}</button>`); const b = $('#hNotif'); if (b) b.onclick = () => this.askNotify(); },
+  renderLog() { const e = $('#hLog'); if (!e || !this.session) return; e.innerHTML = this.session.alerts.slice().reverse().map(a => `<div><span class="note">${a.t}</span><b>Seat ${a.seat}</b><span class="pill ${a.type === 'loud' ? 'bad' : 'warn'}">${a.type === 'loud' ? 'Loud' : 'Chatter'}</span></div>`).join('') || '<div class="note">No alerts yet.</div>'; const c = $('#hCounts'); if (c) c.textContent = `${this.session.alerts.filter(a => a.type === 'chatter').length} chatter · ${this.session.alerts.filter(a => a.type === 'loud').length} loud`; },
+  render() {
+    const S = this.session, tabs = [['live', 'Live'], ['week', 'This week'], ['settings', 'Settings']];
+    const head = `<div class="row" style="justify-content:space-between"><div><h1>Noise Monitor</h1><div class="note">Teacher PC · classroom code for the seat iPads</div><div class="code">${esc(this.code)}</div></div><div class="row" id="hNet"></div></div>
+    <div class="row">${tabs.map(([k, l]) => `<button class="btn ${this.view === k ? 'primary' : ''}" type="button" data-view="${k}">${l}</button>`).join('')}</div>`;
+    let body = '';
+    if (this.view === 'live') body = `<section class="card"><div class="row">${S ? `<span class="pill good">Lesson running: ${esc(S.cls)}</span><span class="note">Started ${S.start} · <b id="sesTime">0:00</b> · <span id="hCounts">0 chatter · 0 loud</span></span><button class="btn danger" type="button" id="hEnd" style="margin-left:auto">End lesson and save</button>` :
+      `<label class="row" style="gap:8px">Class <select class="sel" id="hCls"><option value="">Choose…</option>${this.classes.map(c => `<option>${esc(c)}</option>`).join('')}</select></label><button class="btn primary" type="button" id="hStart">Start lesson</button><span class="note">Alarms sound and alerts are counted only while a lesson is running.</span>`}</div></section>
+      <div class="seats">${[1, 2, 3, 4, 5, 6, 7].map(n => `<div class="seat off" id="seat${n}"><div class="t"><b>Seat ${n}</b><span class="lvl">Offline</span></div><div class="mini">${BANDS.map(b => `<span style="background:var(--${b})"></span>`).join('')}</div><div class="bar"><i></i></div></div>`).join('')}
+      <div class="seat" style="border-style:dashed"><div class="t"><b>Teacher PC</b><span class="lvl" id="tLvl">Microphone off</span></div><div class="note">Records the room level. No alarms.</div></div></div>
+      <div class="grid2"><section class="card"><h3>Room level (PC microphone)</h3><div class="teacherbox">${meterHtml('tMeter')}<div class="note">Yellow seat and a short 2-second ding: Chatter held for ${this.th.holdChatter} s. Red seat and a louder 3-second siren: Loud held for ${this.th.holdLoud} s. Each seat waits a few seconds before alerting again.</div></div></section>
+      <section class="card"><h3>Alerts this lesson</h3><div class="log" id="hLog"><div class="note">${S ? 'No alerts yet.' : 'Start a lesson to record alerts.'}</div></div></section></div>`;
+    if (this.view === 'week') { const days = this.weekDays(), rows = this.weekRows(), top = rows.find(r => r.quiet !== null);
+      body = `<section class="card"><div class="row"><button class="btn small" type="button" id="wPrev">◀</button><b>${days[0].toLocaleDateString('en-GB', {day: 'numeric', month: 'short'})} to ${days[4].toLocaleDateString('en-GB', {day: 'numeric', month: 'short', year: 'numeric'})}</b><button class="btn small" type="button" id="wNext" ${this.weekOff >= 0 ? 'disabled' : ''}>▶</button></div>
+      ${top ? `<div class="pill good" style="font-size:16px;padding:6px 14px;align-self:flex-start">Quietest class: ${esc(top.cls)} · ${top.quiet}% of the time quiet or calmer</div>` : '<div class="note">No lessons recorded this week yet.</div>'}
+      <div class="scroll"><table><thead><tr><th>Rank</th><th>Class</th>${days.map(d => `<th>${d.toLocaleDateString('en-GB', {weekday: 'short'})}</th>`).join('')}${this.hasWeekend() ? '<th>Weekend</th>' : ''}<th class="r">Lessons</th><th class="r">Quiet or calmer</th><th class="r">Silent or whisper</th><th class="r">Chatter alerts</th><th class="r">Loud alerts</th></tr></thead>
+      <tbody>${rows.map((r, i) => `<tr class="${r === top ? 'winner' : ''}"><td>${r.quiet === null ? '–' : i + 1}</td><td><b>${esc(r.cls)}</b></td>${r.byDay.map(xs => `<td>${xs.length ? xs.map(s => `${s.quietPct ?? '–'}%${s.loud ? ' <span class="pill bad">' + s.loud + '</span>' : ''}${s.chatter ? ' <span class="pill warn">' + s.chatter + '</span>' : ''}`).join('<br>') : '<span class="note">–</span>'}</td>`).join('')}<td class="r">${r.n}</td><td class="r"><b>${r.quiet ?? '–'}${r.quiet === null ? '' : '%'}</b></td><td class="r">${r.silent ?? '–'}${r.silent === null ? '' : '%'}</td><td class="r">${r.chatter}</td><td class="r">${r.loud}</td></tr>`).join('')}</tbody></table></div>
+      <div class="note">Ranked by the share of lesson time the seats spent at Quiet, Whisper or Silent. Ties go to fewer loud alerts, then fewer chatter alerts.</div></section>
+      <section class="card"><h3>Send this week to Math Admin</h3><div class="note">Press Copy, then in Math Admin open Noise, paste and press Import.</div><div class="row"><button class="btn primary" type="button" id="wCopy">Copy week for Math Admin</button></div></section>
+      <section class="card"><h3>Lessons this week</h3><div class="scroll"><table><thead><tr><th>Day</th><th>Class</th><th>Time</th><th class="r">Minutes</th><th class="r">Quiet or calmer</th><th class="r">Chatter</th><th class="r">Loud</th><th></th></tr></thead><tbody>${this.sessions.filter(s => this.weekKeys().includes(s.date)).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start)).map(s => `<tr><td>${new Date(s.date + 'T12:00').toLocaleDateString('en-GB', {weekday: 'short', day: 'numeric', month: 'short'})}</td><td>${esc(s.cls)}</td><td>${s.start}–${s.end}</td><td class="r">${s.mins}</td><td class="r">${s.quietPct ?? '–'}%</td><td class="r">${s.chatter}</td><td class="r">${s.loud}</td><td><button class="btn small danger" type="button" data-del="${s.id}">Delete</button></td></tr>`).join('') || '<tr><td colspan="8" class="note">None yet.</td></tr>'}</tbody></table></div></section>`; }
+    if (this.view === 'settings') { const sl = (k, l, min, max, step) => `<label class="slider"><span>${l}</span><input type="range" min="${min}" max="${max}" step="${step}" value="${this.th[k]}" data-th="${k}"><b data-thv="${k}">${this.th[k]}</b></label>`;
+      body = `<section class="card"><h2>Noise levels</h2><div class="note">Levels are 0 (silence) to 100 (very loud). Move a slider up if a level alerts too easily. Seats get the change straight away. Test it: watch a seat while a table talks normally, and set Chatter just below that.</div>
+      ${sl('whisper', 'Whisper from', 5, 60, 1)}${sl('quiet', 'Quiet from', 10, 70, 1)}${sl('chatter', 'Chatter from', 20, 90, 1)}${sl('loud', 'Loud from', 30, 99, 1)}${sl('holdChatter', 'Chatter must last (s)', 0.5, 5, 0.5)}${sl('holdLoud', 'Loud must last (s)', 0.5, 5, 0.5)}
+      <label class="row" style="gap:8px"><input type="checkbox" id="shushOn" ${this.th.shush !== 0 ? 'checked' : ''}> Play "Shhh" on the seat iPad when that seat gets an alert</label>
+      <div class="row"><button class="btn" type="button" id="thReset">Reset to default</button><button class="btn" type="button" id="tChatter">Test chatter alarm</button><button class="btn" type="button" id="tLoud">Test loud alarm</button></div></section>
+      <section class="card"><h2>Classes</h2><label class="note">Class names, separated by commas<br><input class="txt" id="clsList" style="width:100%" value="${esc(this.classes.join(', '))}"></label><div class="row"><button class="btn" type="button" id="clsSave">Save classes</button></div></section>
+      <section class="card"><h2>Classroom code</h2><div class="note">Seats join with this code. Change it only if another room uses the same code.</div><div class="row"><button class="btn" type="button" id="newCode">Make a new code</button></div></section>`; }
+    $('#app').innerHTML = `<div class="wrap">${head}${body}</div>`;
+    this.renderStatus(); this.renderLog(); this.bind();
+  },
+  bind() {
+    document.querySelectorAll('[data-view]').forEach(b => b.onclick = () => { this.view = b.dataset.view; this.render(); });
+    const st = $('#hStart'); if (st) st.onclick = () => this.startLesson();
+    const en = $('#hEnd'); if (en) en.onclick = () => { if (en.dataset.c) this.endLesson(); else { en.dataset.c = 1; en.textContent = 'Press again to end and save'; setTimeout(() => { if ($('#hEnd')) { $('#hEnd').textContent = 'End lesson and save'; delete $('#hEnd').dataset.c; } }, 4000); } };
+    const wp = $('#wPrev'); if (wp) { wp.onclick = () => { this.weekOff--; this.render(); }; $('#wNext').onclick = () => { this.weekOff = Math.min(0, this.weekOff + 1); this.render(); }; }
+    const wc = $('#wCopy'); if (wc) wc.onclick = async () => { const t = this.exportCode(); try { await navigator.clipboard.writeText(t); toast('Copied. Paste it in Math Admin > Noise.'); } catch (e) { prompt('Copy this code:', t); } };
+    document.querySelectorAll('[data-del]').forEach(b => b.onclick = () => { if (b.dataset.c) { this.sessions = this.sessions.filter(s => s.id !== b.dataset.del); LS.set('sessions', this.sessions); this.render(); } else { b.dataset.c = 1; b.textContent = 'Confirm'; } });
+    document.querySelectorAll('[data-th]').forEach(i => i.oninput = () => { const k = i.dataset.th; this.th[k] = +i.value; document.querySelector(`[data-thv="${k}"]`).textContent = i.value; LS.set('th', this.th); this.broadcastCfg(); });
+    const so = $('#shushOn'); if (so) so.onchange = () => { this.th.shush = so.checked ? 1 : 0; LS.set('th', this.th); this.broadcastCfg(); };
+    const rs = $('#thReset'); if (rs) rs.onclick = () => { this.th = {...DEFAULT_TH}; LS.set('th', this.th); this.broadcastCfg(); this.render(); };
+    const tc = $('#tChatter'); if (tc) tc.onclick = () => { Alarm.unlock(); Alarm.chatter(); };
+    const tlo = $('#tLoud'); if (tlo) tlo.onclick = () => { Alarm.unlock(); Alarm.loud(); };
+    const cs = $('#clsSave'); if (cs) cs.onclick = () => { this.classes = $('#clsList').value.split(',').map(s => s.trim().toUpperCase()).filter(Boolean); LS.set('classes', this.classes); toast('Classes saved'); };
+    const nc = $('#newCode'); if (nc) nc.onclick = () => { this.code = String(1000 + Math.floor(Math.random() * 9000)); LS.set('code', this.code); this.listen(); this.render(); toast('New code ' + this.code + '. Seats need to enter it again.'); };
+  }
+};
+window.addEventListener('beforeunload', e => { if (Hub.session) { e.preventDefault(); e.returnValue = ''; } });
+if (params.get('mode') === 'monitor') Hub.open(); else if (/^[1-7]$/.test(params.get('seat') || '')) Seat.setup(+params.get('seat'), LS.get('code', '')); else home();
+</script>
+</body>
+</html>
