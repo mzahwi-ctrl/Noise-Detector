@@ -8,7 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://unpkg.com/mqtt@5.16.1/dist/mqtt.min.js"></script>
 <style>
 :root{
   --bg:#eff2f5; --surface:#fff; --surface2:#f5f7f9; --ink:#0e1621; --ink2:#46515f; --muted:#6b7686; --line:#dde2e8; --line2:#c9d0d8;
@@ -162,6 +162,32 @@ function home() {
   document.querySelectorAll('[data-seat]').forEach(b => b.onclick = () => { const n = +b.dataset.seat; if (n === 0) Hub.open(); else Seat.setup(n, code); });
 }
 
+/* ===== connection: several free public MQTT message servers at once, over secure web connections.
+   If the school network blocks one, the others still carry the messages. ===== */
+const APP_VERSION = 'v3';
+const BROKERS = [['A', 'wss://mqtt.eclipseprojects.io:443/mqtt'], ['B', 'wss://broker.hivemq.com:8884/mqtt'], ['C', 'wss://broker.emqx.io:8084/mqtt'], ['D', 'wss://test.mosquitto.org:8081']];
+const topicFor = code => 'dsk-alkhawaneej-math/noise-v2/' + code;
+function netConnect(onUp, onDown, will) {
+  if (typeof mqtt === 'undefined') return null;
+  const W = {clients: [], subs: [], handlers: [],
+    count() { return this.clients.filter(c => c.connected).length; },
+    names() { return this.clients.map((c, i) => (c.connected ? '✓' : '✗') + BROKERS[i][0]).join(' '); },
+    publish(t, m, o) { this.clients.forEach(c => { if (c.connected) { try { c.publish(t, m, o); } catch (e) {} } }); },
+    subscribe(t, o) { [].concat(t).forEach(x => { if (!this.subs.some(y => y[0] === x)) this.subs.push([x, o]); }); this.clients.forEach(c => { if (c.connected) { try { c.subscribe(t, o); } catch (e) {} } }); },
+    on(ev, fn) { if (ev === 'message') this.handlers.push(fn); },
+    end(f) { this.clients.forEach(c => { try { c.end(f); } catch (e) {} }); }};
+  const id = Math.random().toString(36).slice(2, 10);
+  BROKERS.forEach(([name, url], i) => {
+    let c; try { c = mqtt.connect(url, {clientId: 'nd-' + id + '-' + name, reconnectPeriod: 4000, connectTimeout: 12000, keepalive: 20, clean: true, will}); } catch (e) { return; }
+    W.clients[i] = c;
+    c.on('connect', () => { W.subs.forEach(([t, o]) => { try { c.subscribe(t, o); } catch (e) {} }); onUp(c, i); });
+    c.on('close', () => onDown(i)); c.on('offline', () => onDown(i)); c.on('error', () => {});
+    c.on('message', (t, b) => W.handlers.forEach(fn => fn(t, b, i)));
+  });
+  W.clients = W.clients.filter(Boolean);
+  return W;
+}
+
 /* ===== bouncing balls display ===== */
 const BAND_HEX = {silent: ['#3b7bd8', '#5b95e6', '#2f66b8'], whisper: ['#3faf4f', '#5cc66b', '#2f9140'], quiet: ['#f2c318', '#f7d64c', '#d9a90b'], chatter: ['#f08a2c', '#f6a252', '#d6731a'], loud: ['#e0322b', '#ef5a52', '#bf2620']};
 const Balls = {cv: null, cx: null, list: [], level: 0, band: 'silent', w: 0, h: 0, raf: 0,
@@ -232,25 +258,23 @@ const Seat = {n: 0, peer: null, conn: null, th: {...DEFAULT_TH}, timer: null, re
   },
   status(t, k) { const e = $('#sConn'); if (e) { e.textContent = t; e.className = 'pill ' + k; } },
   connect() {
-    if (typeof Peer === 'undefined') { this.status('Connection library did not load. Check the internet.', 'bad'); return; }
-    if (!this.peer || this.peer.destroyed) {
-      this.peer = new Peer();
-      this.peer.on('open', () => this.link());
-      this.peer.on('error', e => { if (e.type === 'peer-unavailable') this.status('Noise Monitor not found. Is it open with code ' + this.code + '?', 'warn'); else this.status('Connection problem: ' + e.type, 'warn'); this.later(); });
-      this.peer.on('disconnected', () => { try { this.peer.reconnect(); } catch (e) {} });
-    } else this.link();
+    if (this.net) return;
+    const T = topicFor(this.code);
+    this.hubMap = {}; this.net = netConnect(() => { this.up = true; this.paint(); }, i => { this.up = this.net && this.net.count() > 0; delete this.hubMap[i]; this.hubOn = Object.values(this.hubMap).some(Boolean); this.paint(); });
+    if (this.net) this.net.subscribe([T + '/hub', T + '/cfg', T + '/shush/' + this.n], {qos: 0});
+    if (!this.net) { this.status('Connection library did not load. Check the internet and reload.', 'bad'); return; }
+    this.net.on('message', (topic, buf, i) => { let d; try { d = JSON.parse(buf.toString()); } catch (e) { return; }
+      if (topic === T + '/hub') { this.hubMap[i] = !!(d && d.on === 1); this.hubOn = Object.values(this.hubMap).some(Boolean); this.paint(); }
+      else if (topic === T + '/cfg' && d && typeof d === 'object') { this.th = {...DEFAULT_TH, ...d}; this.shushOn = d.shush !== 0; }
+      else if (topic === T + '/shush/' + this.n && d && (d.kind === 'chatter' || d.kind === 'loud') && Math.abs(Date.now() - (d.at || 0)) < 60000 && d.at !== this.lastShush) { this.lastShush = d.at; this.shush(d.kind); } });
+    clearInterval(this.paintT); this.paintT = setInterval(() => this.paint(), 2000);
+    this.paint();
   },
-  link() {
-    const c = this.peer.connect(PREFIX + this.code + '-hub', {metadata: {seat: this.n}, serialization: 'json'});
-    c.on('open', () => { this.conn = c; this.status('Connected to teacher', 'good'); c.send({type: 'hello', seat: this.n}); });
-    c.on('data', d => { if (!d) return; if (d.type === 'cfg' && d.th) { this.th = {...DEFAULT_TH, ...d.th}; this.shushOn = d.th.shush !== 0; } if (d.type === 'shush' && (d.kind === 'chatter' || d.kind === 'loud')) this.shush(d.kind); });
-    c.on('close', () => { this.conn = null; this.status('Noise Monitor disconnected. Retrying…', 'warn'); this.later(); });
-    c.on('error', () => this.later());
-  },
-  later() { clearTimeout(this.retry); this.retry = setTimeout(() => { if (!this.conn) this.connect(); }, 4000); },
+  paint() { const sv = this.net ? ' · ' + this.net.names() + ' · ' + APP_VERSION : ''; if (!this.net || !this.net.count()) this.status('Connecting to the internet…' + sv, 'warn'); else if (!this.hubOn) this.status('Waiting for the Noise Monitor (code ' + this.code + ')' + sv, 'warn'); else this.status('Connected to teacher' + sv, 'good'); },
+  send(v, mute) { if (!this.net || !this.net.count()) return; try { this.net.publish(topicFor(this.code) + '/lvl/' + this.n, JSON.stringify({v, mute: mute ? 1 : 0}), {qos: 0}); } catch (e) {} },
   loop() { clearInterval(this.timer); let k = 0; this.timer = setInterval(() => { const v = Mic.read(), mute = Date.now() < (this.muteUntil || 0), b = band(v, this.th);
     Balls.level = mute ? Balls.level * 0.9 : v; Balls.band = mute ? Balls.band : b; const bb = $('#bBand'); if (bb && !mute) bb.textContent = BAND_LABEL[b];
-    if (++k % 2 === 0 && this.conn && this.conn.open) { try { this.conn.send({type: 'lvl', seat: this.n, v, mute}); } catch (e) {} } }, 100); }
+    const now = Date.now(); if (now - (this.lastSent || 0) >= 1000 || (now - (this.lastSent || 0) >= 250 && Math.abs(v - (this.lastV ?? -99)) >= 2)) { this.lastSent = now; this.lastV = v; this.send(v, mute); } }, 100); }
 };
 
 /* ===== teacher hub ===== */
@@ -265,18 +289,17 @@ const Hub = {peer: null, code: LS.get('code', ''), th: {...DEFAULT_TH, ...LS.get
     clearInterval(this.timer); this.timer = setInterval(() => this.tick(), 200);
   },
   listen() {
-    if (typeof Peer === 'undefined') { this.net = 'The connection library did not load. Check the internet and reload.'; this.renderStatus(); return; }
-    try { this.peer && this.peer.destroy(); } catch (e) {}
-    this.peer = new Peer(PREFIX + this.code + '-hub');
-    this.peer.on('open', () => { this.net = ''; this.renderStatus(); });
-    this.peer.on('connection', c => {
-      c.on('data', d => { if (!d || typeof d !== 'object') return; const n = +d.seat; if (!(n >= 1 && n <= 7)) return; this.conns[n] = c; if (d.type === 'hello') c.send({type: 'cfg', th: this.th}); if (d.type === 'lvl') { if (d.mute) { this.seats[n].last = Date.now(); this.seats[n].lastT = performance.now(); } else this.onLevel(this.seats[n], Math.max(0, Math.min(100, +d.v || 0)), true); } });
-      c.on('open', () => c.send({type: 'cfg', th: this.th}));
-    });
-    this.peer.on('error', e => { if (e.type === 'unavailable-id') { this.net = 'This code is still in use (the page was probably just reloaded). Retrying in a few seconds…'; this.renderStatus(); setTimeout(() => this.listen(), 6000); } else { this.net = 'Connection problem: ' + e.type + '. Retrying…'; this.renderStatus(); setTimeout(() => this.listen(), 6000); } });
-    this.peer.on('disconnected', () => { try { this.peer.reconnect(); } catch (e) {} });
+    try { this.net && this.net.end(true); } catch (e) {}
+    const T = topicFor(this.code); this.T = T;
+    this.net = netConnect(c => { this.up = true; try { c.publish(T + '/hub', JSON.stringify({on: 1}), {retain: true, qos: 1}); c.publish(T + '/cfg', JSON.stringify(this.th), {retain: true, qos: 1}); } catch (e) {} this.net_msg = ''; this.renderStatus(); },
+      () => { this.up = this.net && this.net.count() > 0; this.renderStatus(); }, {topic: T + '/hub', payload: JSON.stringify({on: 0}), retain: true, qos: 1});
+    if (!this.net) { this.net_msg = 'The connection library did not load. Check the internet and reload.'; this.renderStatus(); return; }
+    const net = this.net; net.subscribe(T + '/lvl/+', {qos: 0}); clearInterval(this.stT); this.stT = setInterval(() => this.renderStatus(), 3000);
+    net.on('message', (topic, buf) => { if (net !== this.net) return; const m = topic.match(/\/lvl\/([1-7])$/); if (!m || !topic.startsWith(T + '/')) return; let d; try { d = JSON.parse(buf.toString()); } catch (e) { return; } const n = +m[1];
+      if (d.mute) { this.seats[n].last = Date.now(); this.seats[n].lastT = performance.now(); } else this.onLevel(this.seats[n], Math.max(0, Math.min(100, +d.v || 0)), true); });
+    if (!this.hideBound) { this.hideBound = true; addEventListener('pagehide', () => { try { this.net.publish(this.T + '/hub', JSON.stringify({on: 0}), {retain: true}); } catch (e) {} }); }
   },
-  broadcastCfg() { Object.values(this.conns).forEach(c => { try { c.open && c.send({type: 'cfg', th: this.th}); } catch (e) {} }); },
+  broadcastCfg() { if (this.net && this.net.count()) { try { this.net.publish(this.T + '/cfg', JSON.stringify(this.th), {retain: true, qos: 1}); } catch (e) {} } },
   onLevel(s, v, isSeat) {
     const now = performance.now(), dt = s.last ? Math.min(1, (now - s.lastT) / 1000) : 0.2;
     s.v = v; s.band = band(v, this.th); s.lastT = now; s.last = Date.now();
@@ -298,7 +321,7 @@ const Hub = {peer: null, code: LS.get('code', ''), th: {...DEFAULT_TH, ...LS.get
     s.cool[type] = now + (type === 'loud' ? 8000 : 10000); if (type === 'loud') s.cool.chatter = now + 10000;
     s.alert = {type, until: now + (type === 'loud' ? 3000 : 2000)}; s.over.chatter = 0; s.over.loud = 0;
     if (type === 'loud') Alarm.loud(); else Alarm.chatter();
-    if (this.th.shush !== 0) { const c = this.conns[s.n]; try { c && c.open && c.send({type: 'shush', kind: type}); } catch (e) {} }
+    if (this.th.shush !== 0 && this.net && this.net.count()) { try { this.net.publish(this.T + '/shush/' + s.n, JSON.stringify({kind: type, at: Date.now()}), {qos: 1}); } catch (e) {} }
     if (document.visibilityState !== 'visible' || !document.hasFocus()) this.notify(s, type);
     const rec = this.session.seats[s.n]; rec[type]++;
     this.session.alerts.push({t: new Date().toTimeString().slice(0, 8), seat: s.n, type});
@@ -353,7 +376,7 @@ const Hub = {peer: null, code: LS.get('code', ''), th: {...DEFAULT_TH, ...LS.get
   },
   hasWeekend() { const w = this.weekKeys().slice(5); return this.sessions.some(s => w.includes(s.date)); },
   exportCode() { const keys = this.weekKeys(); const ss = this.sessions.filter(s => keys.includes(s.date)).map(({alerts, ...s}) => ({...s, alertTimes: alerts.map(a => a.t + ' S' + a.seat + ' ' + a.type[0])})); return 'NOISE1:' + btoa(unescape(encodeURIComponent(JSON.stringify({week: keys[0], sessions: ss})))); },
-  renderStatus() { const e = $('#hNet'); if (!e) return; const np = 'Notification' in window ? Notification.permission : 'none'; const seatsOn = Object.values(this.seats).filter(x => x.last && Date.now() - x.last < 3000).length; e.innerHTML = (this.net ? `<div class="pill warn">${esc(this.net)}</div>` : `<span class="pill good">Ready for seats</span>`) + (np === 'granted' ? '<span class="pill good">Windows pop-ups on</span>' : np === 'none' ? '' : `<button class="btn small" type="button" id="hNotif">${np === 'denied' ? 'Pop-ups blocked: how to fix' : 'Turn on Windows pop-ups'}</button>`); const b = $('#hNotif'); if (b) b.onclick = () => this.askNotify(); },
+  renderStatus() { const e = $('#hNet'); if (!e) return; const np = 'Notification' in window ? Notification.permission : 'none'; const seatsOn = Object.values(this.seats).filter(x => x.last && Date.now() - x.last < 3000).length; e.innerHTML = (this.net_msg ? `<div class="pill warn">${esc(this.net_msg)}</div>` : (this.net && this.net.count() ? `<span class="pill good">Ready for seats</span>` : `<span class="pill warn">Connecting to the internet…</span>`) + (this.net ? `<span class="pill neutral" title="Message servers reached by this PC">${esc(this.net.names())} · ${APP_VERSION}</span>` : '')) + (np === 'granted' ? '<span class="pill good">Windows pop-ups on</span>' : np === 'none' ? '' : `<button class="btn small" type="button" id="hNotif">${np === 'denied' ? 'Pop-ups blocked: how to fix' : 'Turn on Windows pop-ups'}</button>`); const b = $('#hNotif'); if (b) b.onclick = () => this.askNotify(); },
   renderLog() { const e = $('#hLog'); if (!e || !this.session) return; e.innerHTML = this.session.alerts.slice().reverse().map(a => `<div><span class="note">${a.t}</span><b>Seat ${a.seat}</b><span class="pill ${a.type === 'loud' ? 'bad' : 'warn'}">${a.type === 'loud' ? 'Loud' : 'Chatter'}</span></div>`).join('') || '<div class="note">No alerts yet.</div>'; const c = $('#hCounts'); if (c) c.textContent = `${this.session.alerts.filter(a => a.type === 'chatter').length} chatter · ${this.session.alerts.filter(a => a.type === 'loud').length} loud`; },
   render() {
     const S = this.session, tabs = [['live', 'Live'], ['week', 'This week'], ['settings', 'Settings']];
