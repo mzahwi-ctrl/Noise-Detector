@@ -108,7 +108,8 @@ body.ballmode{overflow:hidden}
 /* ===== shared ===== */
 const BANDS = ['silent', 'whisper', 'quiet', 'chatter', 'loud'];
 const BAND_LABEL = {silent: 'Silent', whisper: 'Whisper', quiet: 'Quiet', chatter: 'Chatter', loud: 'Loud'};
-const DEFAULT_TH = {whisper: 22, quiet: 38, chatter: 56, loud: 72, holdChatter: 1.5, holdLoud: 1.0};
+const DEFAULT_TH = {whisper: 25, quiet: 40, chatter: 58, loud: 72, holdChatter: 2.5, holdLoud: 1.5, cooldown: 20, ignoreRoom: 1, margin: 10};
+const BUSY_TH = {whisper: 28, quiet: 44, chatter: 62, loud: 76, holdChatter: 3, holdLoud: 1.5, cooldown: 30, ignoreRoom: 1, margin: 12};
 const PREFIX = 'dskmath-noise-';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
@@ -164,7 +165,7 @@ function home() {
 
 /* ===== connection: several free public MQTT message servers at once, over secure web connections.
    If the school network blocks one, the others still carry the messages. ===== */
-const APP_VERSION = 'v3';
+const APP_VERSION = 'v4';
 const BROKERS = [['A', 'wss://mqtt.eclipseprojects.io:443/mqtt'], ['B', 'wss://broker.hivemq.com:8884/mqtt'], ['C', 'wss://broker.emqx.io:8084/mqtt'], ['D', 'wss://test.mosquitto.org:8081']];
 const topicFor = code => 'dsk-alkhawaneej-math/noise-v2/' + code;
 function netConnect(onUp, onDown, will) {
@@ -278,7 +279,7 @@ const Seat = {n: 0, peer: null, conn: null, th: {...DEFAULT_TH}, timer: null, re
 };
 
 /* ===== teacher hub ===== */
-const Hub = {peer: null, code: LS.get('code', ''), th: {...DEFAULT_TH, ...LS.get('th', {})}, classes: LS.get('classes', ['6F', '7D', '7E', '7F']), sessions: LS.get('sessions', []),
+const Hub = {peer: null, code: LS.get('code', ''), th: {...DEFAULT_TH, ...LS.get('th', {})},  classes: LS.get('classes', ['6F', '7D', '7E', '7F']), sessions: LS.get('sessions', []),
   seats: {}, conns: {}, session: null, timer: null, view: 'live', weekOff: 0, logs: [],
   newSeat(n) { return {n, v: 0, band: 'silent', last: 0, over: {chatter: 0, loud: 0}, cool: {chatter: 0, loud: 0}, alert: null}; },
   open() {
@@ -303,11 +304,18 @@ const Hub = {peer: null, code: LS.get('code', ''), th: {...DEFAULT_TH, ...LS.get
   onLevel(s, v, isSeat) {
     const now = performance.now(), dt = s.last ? Math.min(1, (now - s.lastT) / 1000) : 0.2;
     s.v = v; s.band = band(v, this.th); s.lastT = now; s.last = Date.now();
+    if (v >= (s.peak || 0) || Date.now() - (s.peakAt || 0) > 10000) { s.peak = v; s.peakAt = Date.now(); }
     const S = this.session;
     if (S) { const rec = S.seats[s.n] = S.seats[s.n] || {bands: {silent: 0, whisper: 0, quiet: 0, chatter: 0, loud: 0}, chatter: 0, loud: 0, sum: 0, cnt: 0}; rec.bands[s.band] += dt; rec.sum += v; rec.cnt++; }
     if (!isSeat || !S) return;   // teacher mic records only; alarms only during a lesson
-    s.over.loud = s.band === 'loud' ? s.over.loud + dt : 0;
-    s.over.chatter = (s.band === 'chatter' || s.band === 'loud') ? s.over.chatter + dt : 0;
+    // Ignore sound that most seats hear at the same moment (the teacher talking, the whole room): a seat only counts
+    // when it is clearly louder than the typical seat, unless the whole room is at Loud.
+    let b2 = s.band;
+    if (this.th.ignoreRoom) { const others = Object.values(this.seats).filter(x => x !== s && x.last && Date.now() - x.last < 3000).map(x => x.v).sort((a, c) => a - c);
+      if (others.length >= 2) { const med = others[Math.floor(others.length / 2)]; s.roomMed = med; if (v - med < this.th.margin && med < this.th.loud) b2 = 'quiet'; } }
+    s.eff = b2;
+    s.over.loud = b2 === 'loud' ? s.over.loud + dt : 0;
+    s.over.chatter = (b2 === 'chatter' || b2 === 'loud') ? s.over.chatter + dt : 0;
     if (s.over.loud >= this.th.holdLoud && Date.now() > s.cool.loud) this.fire(s, 'loud');
     else if (s.over.chatter >= this.th.holdChatter && Date.now() > s.cool.chatter && Date.now() > s.cool.loud) this.fire(s, 'chatter');
   },
@@ -318,7 +326,7 @@ const Hub = {peer: null, code: LS.get('code', ''), th: {...DEFAULT_TH, ...LS.get
   async askNotify() { if (!('Notification' in window)) { toast('This browser cannot show pop-ups.'); return; } if (Notification.permission === 'default') { try { await Notification.requestPermission(); } catch (e) {} } this.renderStatus(); if (Notification.permission === 'denied') toast('Pop-ups are blocked. Click the icon left of the address bar, allow Notifications, then reload.'); },
   fire(s, type) {
     const now = Date.now();
-    s.cool[type] = now + (type === 'loud' ? 8000 : 10000); if (type === 'loud') s.cool.chatter = now + 10000;
+    const cd = (this.th.cooldown || 20) * 1000; s.cool[type] = now + cd; if (type === 'loud') s.cool.chatter = now + cd; else s.cool.loud = now + Math.min(cd, 8000);
     s.alert = {type, until: now + (type === 'loud' ? 3000 : 2000)}; s.over.chatter = 0; s.over.loud = 0;
     if (type === 'loud') Alarm.loud(); else Alarm.chatter();
     if (this.th.shush !== 0 && this.net && this.net.count()) { try { this.net.publish(this.T + '/shush/' + s.n, JSON.stringify({kind: type, at: Date.now()}), {qos: 1}); } catch (e) {} }
@@ -334,13 +342,14 @@ const Hub = {peer: null, code: LS.get('code', ''), th: {...DEFAULT_TH, ...LS.get
       const off = !s.last || now - s.last > 3000;
       if (s.alert && now > s.alert.until) s.alert = null;
       el.className = 'seat' + (off ? ' off' : '') + (s.alert ? ' alert-' + s.alert.type : '');
-      el.querySelector('.lvl').textContent = off ? 'Offline' : BAND_LABEL[s.band];
+      el.querySelector('.lvl').textContent = off ? 'Offline' : BAND_LABEL[s.band] + ' · ' + Math.round(s.v);
       el.querySelector('.lvl').style.color = off ? 'var(--muted)' : `var(--${s.band === 'quiet' ? 'warn' : s.band})`;
       el.querySelectorAll('.mini span').forEach((m, k) => m.classList.toggle('on', !off && k <= BANDS.indexOf(s.band)));
       el.querySelector('.bar i').style.width = (off ? 0 : s.v) + '%';
     }
     setMeter($('#tMeter'), Mic.on ? this.teacher.band : 'silent');
-    const tl = $('#tLvl'); if (tl) tl.textContent = Mic.on ? BAND_LABEL[this.teacher.band] : 'Microphone off';
+    const tl = $('#tLvl'); if (tl) tl.textContent = Mic.on ? BAND_LABEL[this.teacher.band] + ' · ' + Math.round(this.teacher.v) : 'Microphone off';
+    document.querySelectorAll('[data-cal]').forEach(e => { const k = +e.dataset.cal, x = k ? this.seats[k] : this.teacher, off = k ? (!x.last || now - x.last > 3000) : !Mic.on; e.innerHTML = off ? '<span class="note">offline</span>' : `<b>${Math.round(x.v)}</b> <span class="note">now</span> · <b>${Math.round(x.peak || 0)}</b> <span class="note">highest in 10 s</span>`; });
     const tm = $('#sesTime'); if (tm && this.session) { const m = Math.floor((now - this.session.startMs) / 1000); tm.textContent = `${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`; }
   },
   async startLesson() {
@@ -387,7 +396,7 @@ const Hub = {peer: null, code: LS.get('code', ''), th: {...DEFAULT_TH, ...LS.get
       `<label class="row" style="gap:8px">Class <select class="sel" id="hCls"><option value="">Choose…</option>${this.classes.map(c => `<option>${esc(c)}</option>`).join('')}</select></label><button class="btn primary" type="button" id="hStart">Start lesson</button><span class="note">Alarms sound and alerts are counted only while a lesson is running.</span>`}</div></section>
       <div class="seats">${[1, 2, 3, 4, 5, 6, 7].map(n => `<div class="seat off" id="seat${n}"><div class="t"><b>Seat ${n}</b><span class="lvl">Offline</span></div><div class="mini">${BANDS.map(b => `<span style="background:var(--${b})"></span>`).join('')}</div><div class="bar"><i></i></div></div>`).join('')}
       <div class="seat" style="border-style:dashed"><div class="t"><b>Teacher PC</b><span class="lvl" id="tLvl">Microphone off</span></div><div class="note">Records the room level. No alarms.</div></div></div>
-      <div class="grid2"><section class="card"><h3>Room level (PC microphone)</h3><div class="teacherbox">${meterHtml('tMeter')}<div class="note">Yellow seat and a short 2-second ding: Chatter held for ${this.th.holdChatter} s. Red seat and a louder 3-second siren: Loud held for ${this.th.holdLoud} s. Each seat waits a few seconds before alerting again.</div></div></section>
+      <div class="grid2"><section class="card"><h3>Room level (PC microphone)</h3><div class="teacherbox">${meterHtml('tMeter')}<div class="note">Yellow seat and a short 2-second ding: Chatter held for ${this.th.holdChatter} s. Red seat and a louder 3-second siren: Loud held for ${this.th.holdLoud} s. The same seat waits ${this.th.cooldown || 20} s before alerting again.${this.th.ignoreRoom ? ' Sound heard by most seats at once (your voice) is ignored.' : ''}</div></div></section>
       <section class="card"><h3>Alerts this lesson</h3><div class="log" id="hLog"><div class="note">${S ? 'No alerts yet.' : 'Start a lesson to record alerts.'}</div></div></section></div>`;
     if (this.view === 'week') { const days = this.weekDays(), rows = this.weekRows(), top = rows.find(r => r.quiet !== null);
       body = `<section class="card"><div class="row"><button class="btn small" type="button" id="wPrev">◀</button><b>${days[0].toLocaleDateString('en-GB', {day: 'numeric', month: 'short'})} to ${days[4].toLocaleDateString('en-GB', {day: 'numeric', month: 'short', year: 'numeric'})}</b><button class="btn small" type="button" id="wNext" ${this.weekOff >= 0 ? 'disabled' : ''}>▶</button></div>
@@ -399,9 +408,13 @@ const Hub = {peer: null, code: LS.get('code', ''), th: {...DEFAULT_TH, ...LS.get
       <section class="card"><h3>Lessons this week</h3><div class="scroll"><table><thead><tr><th>Day</th><th>Class</th><th>Time</th><th class="r">Minutes</th><th class="r">Quiet or calmer</th><th class="r">Chatter</th><th class="r">Loud</th><th></th></tr></thead><tbody>${this.sessions.filter(s => this.weekKeys().includes(s.date)).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start)).map(s => `<tr><td>${new Date(s.date + 'T12:00').toLocaleDateString('en-GB', {weekday: 'short', day: 'numeric', month: 'short'})}</td><td>${esc(s.cls)}</td><td>${s.start}–${s.end}</td><td class="r">${s.mins}</td><td class="r">${s.quietPct ?? '–'}%</td><td class="r">${s.chatter}</td><td class="r">${s.loud}</td><td><button class="btn small danger" type="button" data-del="${s.id}">Delete</button></td></tr>`).join('') || '<tr><td colspan="8" class="note">None yet.</td></tr>'}</tbody></table></div></section>`; }
     if (this.view === 'settings') { const sl = (k, l, min, max, step) => `<label class="slider"><span>${l}</span><input type="range" min="${min}" max="${max}" step="${step}" value="${this.th[k]}" data-th="${k}"><b data-thv="${k}">${this.th[k]}</b></label>`;
       body = `<section class="card"><h2>Noise levels</h2><div class="note">Levels are 0 (silence) to 100 (very loud). Move a slider up if a level alerts too easily. Seats get the change straight away. Test it: watch a seat while a table talks normally, and set Chatter just below that.</div>
-      ${sl('whisper', 'Whisper from', 5, 60, 1)}${sl('quiet', 'Quiet from', 10, 70, 1)}${sl('chatter', 'Chatter from', 20, 90, 1)}${sl('loud', 'Loud from', 30, 99, 1)}${sl('holdChatter', 'Chatter must last (s)', 0.5, 5, 0.5)}${sl('holdLoud', 'Loud must last (s)', 0.5, 5, 0.5)}
+      ${sl('whisper', 'Whisper from', 5, 60, 1)}${sl('quiet', 'Quiet from', 10, 70, 1)}${sl('chatter', 'Chatter from', 20, 90, 1)}${sl('loud', 'Loud from', 30, 99, 1)}${sl('holdChatter', 'Chatter must last (s)', 0.5, 8, 0.5)}${sl('holdLoud', 'Loud must last (s)', 0.5, 8, 0.5)}${sl('cooldown', 'Wait before the same seat alerts again (s)', 5, 120, 5)}
+      <label class="row" style="gap:8px"><input type="checkbox" id="ignoreRoom" ${this.th.ignoreRoom ? 'checked' : ''}> Ignore sound that most seats hear at once (your voice, the whole room). A seat alerts only when it is clearly louder than the others.</label>
+      ${sl('margin', 'How much louder than the other seats', 0, 30, 1)}
       <label class="row" style="gap:8px"><input type="checkbox" id="shushOn" ${this.th.shush !== 0 ? 'checked' : ''}> Play "Shhh" on the seat iPad when that seat gets an alert</label>
-      <div class="row"><button class="btn" type="button" id="thReset">Reset to default</button><button class="btn" type="button" id="tChatter">Test chatter alarm</button><button class="btn" type="button" id="tLoud">Test loud alarm</button></div></section>
+      <div class="row"><button class="btn primary" type="button" id="thBusy">Use settings for a large, lively class</button><button class="btn" type="button" id="thReset">Reset to default</button><button class="btn" type="button" id="tChatter">Test chatter alarm</button><button class="btn" type="button" id="tLoud">Test loud alarm</button></div></section>
+      <section class="card"><h2>Check the levels in your room</h2><div class="note">Each number is 0 (silence) to 100. Try these three checks with the class seated:<br>1. Everyone silent: note the numbers.<br>2. You talk normally from 2–5 metres away: watch the highest numbers. Your Chatter level must be above these.<br>3. One table talks at a normal group-work volume: Chatter should be just below that table's number, and above the other tables.</div>
+      <div class="scroll"><table><tbody>${[1, 2, 3, 4, 5, 6, 7].map(n => `<tr><td>Seat ${n}</td><td data-cal="${n}"></td></tr>`).join('')}<tr><td>Teacher PC</td><td data-cal="0"></td></tr></tbody></table></div></section>
       <section class="card"><h2>Classes</h2><label class="note">Class names, separated by commas<br><input class="txt" id="clsList" style="width:100%" value="${esc(this.classes.join(', '))}"></label><div class="row"><button class="btn" type="button" id="clsSave">Save classes</button></div></section>
       <section class="card"><h2>Classroom code</h2><div class="note">Seats join with this code. Change it only if another room uses the same code.</div><div class="row"><button class="btn" type="button" id="newCode">Make a new code</button></div></section>`; }
     $('#app').innerHTML = `<div class="wrap">${head}${body}</div>`;
@@ -416,7 +429,9 @@ const Hub = {peer: null, code: LS.get('code', ''), th: {...DEFAULT_TH, ...LS.get
     document.querySelectorAll('[data-del]').forEach(b => b.onclick = () => { if (b.dataset.c) { this.sessions = this.sessions.filter(s => s.id !== b.dataset.del); LS.set('sessions', this.sessions); this.render(); } else { b.dataset.c = 1; b.textContent = 'Confirm'; } });
     document.querySelectorAll('[data-th]').forEach(i => i.oninput = () => { const k = i.dataset.th; this.th[k] = +i.value; document.querySelector(`[data-thv="${k}"]`).textContent = i.value; LS.set('th', this.th); this.broadcastCfg(); });
     const so = $('#shushOn'); if (so) so.onchange = () => { this.th.shush = so.checked ? 1 : 0; LS.set('th', this.th); this.broadcastCfg(); };
-    const rs = $('#thReset'); if (rs) rs.onclick = () => { this.th = {...DEFAULT_TH}; LS.set('th', this.th); this.broadcastCfg(); this.render(); };
+    const ir = $('#ignoreRoom'); if (ir) ir.onchange = () => { this.th.ignoreRoom = ir.checked ? 1 : 0; LS.set('th', this.th); this.broadcastCfg(); };
+    const tb = $('#thBusy'); if (tb) tb.onclick = () => { this.th = {...this.th, ...BUSY_TH}; LS.set('th', this.th); this.broadcastCfg(); this.render(); toast('Settings for a large, lively class applied.'); };
+    const rs = $('#thReset'); if (rs) rs.onclick = () => { this.th = {...DEFAULT_TH, shush: this.th.shush}; LS.set('th', this.th); this.broadcastCfg(); this.render(); };
     const tc = $('#tChatter'); if (tc) tc.onclick = () => { Alarm.unlock(); Alarm.chatter(); };
     const tlo = $('#tLoud'); if (tlo) tlo.onclick = () => { Alarm.unlock(); Alarm.loud(); };
     const cs = $('#clsSave'); if (cs) cs.onclick = () => { this.classes = $('#clsList').value.split(',').map(s => s.trim().toUpperCase()).filter(Boolean); LS.set('classes', this.classes); toast('Classes saved'); };
